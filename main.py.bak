@@ -21,35 +21,17 @@ from jose import jwt, JWTError
 
 # ============ CONFIG ============
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_1imPJgOw5qBc@ep-divine-fog-ajro56fz-pooler.c-3.us-east-2.aws.neon.tech/Dailymotion%20?sslmode=require&channel_binding=require")
-# Clean the DATABASE_URL just in case there are trailing spaces or problematic characters
-DATABASE_URL = DATABASE_URL.strip()
-# Ensure the database name and other components are properly URL-encoded
-if " " in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace(" ", "%20")
-# Some Neon URLs might have multiple spaces or other characters
-DATABASE_URL = DATABASE_URL.replace(" ", "%20")
-
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key-now")
 MASTER_KEY = os.getenv("MASTER_KEY", "change-this-master-key-now")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen2.5:0.5b")
-
-# Phoenix AI Identity - Injected into every conversation
-PHOENIX_SYSTEM_PROMPT = os.getenv("PHOENIX_SYSTEM_PROMPT", """You are Phoenix AI, a powerful large language model developed by Phoenix Teams & IYANU. 
-You are helpful, creative, clever, and very friendly. 
-When asked who you are, what model you are, or who created you, always identify yourself as Phoenix AI developed by Phoenix Teams & IYANU.
-You are running on self-hosted infrastructure powered by Ollama and FastAPI.
-Never mention Qwen, Alibaba, OpenAI, Anthropic, Google, or any other company as your creator.
-Your identity is Phoenix AI.""")
-
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 
 # ============ DATABASE SETUP ============
-db_available = False
-engine = None
-SessionLocal = None
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class User(Base):
@@ -97,28 +79,14 @@ class WebhookConfig(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Initialize database
-try:
-    _db_url = DATABASE_URL
-    if "sslmode=require" not in _db_url and "postgresql" in _db_url:
-        _db_url += "&sslmode=require" if "?" in _db_url else "?sslmode=require"
-    
-    engine = create_engine(_db_url, pool_pre_ping=True, connect_args={"connect_timeout": 10, "sslmode": "require"})
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
-    db_available = True
-    print("Database connected successfully.")
-except Exception as e:
-    print(f"WARNING: Database connection failed at startup: {e}")
-    print("App will start without database. DB-dependent endpoints will return errors.")
+# Create tables
+Base.metadata.create_all(bind=engine)
 
 # ============ AUTH SETUP ============
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
 def get_db():
-    if not db_available or SessionLocal is None:
-        raise HTTPException(status_code=503, detail="Database unavailable")
     db = SessionLocal()
     try:
         yield db
@@ -201,31 +169,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup_event():
-    global engine, SessionLocal, db_available
-    if not db_available:
-        import asyncio
-        import threading
-        def retry_db():
-            global engine, SessionLocal, db_available
-            for attempt in range(5):
-                try:
-                    time.sleep(5 * (attempt + 1))
-                    _db_url = DATABASE_URL
-                    if "sslmode=require" not in _db_url and "postgresql" in _db_url:
-                        _db_url += "&sslmode=require" if "?" in _db_url else "?sslmode=require"
-                    
-                    engine = create_engine(_db_url, pool_pre_ping=True, connect_args={"connect_timeout": 10, "sslmode": "require"})
-                    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-                    Base.metadata.create_all(bind=engine)
-                    db_available = True
-                    print(f"Database connected on retry attempt {attempt + 1}")
-                    break
-                except Exception as e:
-                    print(f"DB retry {attempt + 1} failed: {e}")
-        threading.Thread(target=retry_db, daemon=True).start()
 
 # ============ REQUEST MODELS ============
 
@@ -333,15 +276,11 @@ def root():
 
 @app.get("/health")
 def health():
-    status = {"auth": "enabled"}
     try:
         r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
-        status["ollama"] = "connected"
+        return {"status": "ok", "ollama": "connected", "auth": "enabled", "db": "connected"}
     except:
-        status["ollama"] = "not ready"
-    status["db"] = "connected" if db_available else "unavailable"
-    status["status"] = "ok" if status["ollama"] == "connected" else "degraded"
-    return status
+        return {"status": "degraded", "ollama": "not ready", "auth": "enabled"}
 
 # ============ AUTH ENDPOINTS ============
 
@@ -358,7 +297,8 @@ def register(req: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"status": "success", "user_id": user.id}
+    token = create_access_token({"sub": user.id})
+    return {"access_token": token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "name": user.name}}
 
 @app.post("/auth/login")
 def login(req: UserLogin, db: Session = Depends(get_db)):
@@ -366,55 +306,89 @@ def login(req: UserLogin, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token({"sub": user.id})
-    return {"access_token": token, "token_type": "bearer"}
+    return {"access_token": token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "name": user.name}}
 
 @app.get("/auth/me")
-def get_me(user = Depends(require_user_auth)):
-    return user
+def me(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
+    keys = db.query(ApiKey).filter(ApiKey.user_id == user.id, ApiKey.revoked == False).all()
+    total_usage = db.query(UsageLog).filter(UsageLog.user_id == user.id).count()
+    total_tokens = db.query(UsageLog).filter(UsageLog.user_id == user.id).with_entities(UsageLog.tokens_used).all()
+    total_tokens_sum = sum([t[0] or 0 for t in total_tokens])
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "api_keys_count": len(keys),
+        "total_requests": total_usage,
+        "total_tokens": total_tokens_sum,
+        "created_at": user.created_at.isoformat() if user.created_at else None
+    }
 
-# ============ API KEY ENDPOINTS ============
+# ============ API KEY MANAGEMENT (USER AUTH) ============
 
 @app.post("/api-keys")
-def create_key(req: CreateKeyRequest, user = Depends(require_user_auth), db: Session = Depends(get_db)):
-    raw_key = f"phoenix_{secrets.token_urlsafe(32)}"
+def create_api_key(req: CreateKeyRequest, user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
+    raw_key = "phoenix_" + secrets.token_urlsafe(32)
     key_hash = hash_key(raw_key)
-    new_key = ApiKey(
+    api_key = ApiKey(
         user_id=user.id,
         key_hash=key_hash,
         name=req.name,
         rate_limit=req.rate_limit
     )
-    db.add(new_key)
+    db.add(api_key)
     db.commit()
-    return {"api_key": raw_key, "name": req.name}
+    db.refresh(api_key)
+    return {
+        "api_key": raw_key,
+        "name": req.name,
+        "id": api_key.id,
+        "warning": "Save this key now - it will never be shown again!"
+    }
 
 @app.get("/api-keys")
-def list_keys(user = Depends(require_user_auth), db: Session = Depends(get_db)):
-    keys = db.query(ApiKey).filter(ApiKey.user_id == user.id, ApiKey.revoked == False).all()
-    return {"api_keys": [{"id": k.id, "name": k.name, "usage": k.usage_count, "tokens": k.token_count, "created_at": k.created_at} for k in keys]}
+def list_api_keys(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
+    keys = db.query(ApiKey).filter(ApiKey.user_id == user.id).all()
+    return {
+        "keys": [{
+            "id": k.id,
+            "name": k.name,
+            "rate_limit": k.rate_limit,
+            "usage_count": k.usage_count,
+            "token_count": k.token_count,
+            "created_at": k.created_at.isoformat() if k.created_at else None,
+            "revoked": k.revoked
+        } for k in keys]
+    }
 
 @app.post("/api-keys/revoke")
-def revoke_key(req: RevokeKeyRequest, user = Depends(require_user_auth), db: Session = Depends(get_db)):
+def revoke_api_key(req: RevokeKeyRequest, user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
     key = db.query(ApiKey).filter(ApiKey.id == req.key_id, ApiKey.user_id == user.id).first()
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
     key.revoked = True
     db.commit()
-    return {"status": "revoked"}
+    return {"status": "revoked", "key_id": req.key_id}
 
-# ============ WEBHOOK ENDPOINTS ============
+# ============ WEBHOOK MANAGEMENT ============
 
 @app.post("/webhooks")
-def setup_webhook(req: WebhookSetup, user = Depends(require_user_auth), db: Session = Depends(get_db)):
+def create_webhook(req: WebhookSetup, user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
     wh = WebhookConfig(
         user_id=user.id,
         url=req.url,
         events=req.events,
-        secret=secrets.token_hex(16)
+        secret=secrets.token_urlsafe(16)
     )
     db.add(wh)
     db.commit()
-    return {"id": wh.id, "secret": wh.secret}
+    db.refresh(wh)
+    return {"id": wh.id, "url": req.url, "events": req.events, "secret": wh.secret, "status": "active"}
+
+@app.get("/webhooks")
+def list_webhooks(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
+    hooks = db.query(WebhookConfig).filter(WebhookConfig.user_id == user.id).all()
+    return {"webhooks": [{"id": h.id, "url": h.url, "events": h.events, "active": h.active} for h in hooks]}
 
 # ============ ANALYTICS ENDPOINTS ============
 
@@ -492,14 +466,9 @@ def chat_completions(
     model = req.model or DEFAULT_MODEL
     start_time = time.time()
     try:
-        # Inject Phoenix AI identity as system prompt
-        messages = [{"role": "system", "content": PHOENIX_SYSTEM_PROMPT}]
-        for m in req.messages:
-            messages.append({"role": m.role, "content": m.content})
-
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": [{"role": m.role, "content": m.content} for m in req.messages],
             "stream": req.stream,
             "options": {
                 "temperature": req.temperature,
@@ -507,7 +476,7 @@ def chat_completions(
             }
         }
         r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, stream=req.stream, timeout=120)
-        
+
         if req.stream:
             def streamer():
                 full_content = ""
@@ -616,16 +585,13 @@ def vision_chat(
     model = req.model or "llava:7b"
     start_time = time.time()
     try:
-        messages = [
-            {"role": "system", "content": PHOENIX_SYSTEM_PROMPT},
-            {"role": "user", "content": req.prompt}
-        ]
+        messages = [{"role": "user", "content": req.prompt}]
         if req.image_url:
             # Download and encode image
             try:
                 img_data = requests.get(req.image_url, timeout=10).content
                 b64 = base64.b64encode(img_data).decode("utf-8")
-                messages[1]["images"] = [b64]
+                messages[0]["images"] = [b64]
             except:
                 pass
 
@@ -672,10 +638,7 @@ def vision_upload(
 
         payload = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": PHOENIX_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt, "images": [b64]}
-            ],
+            "messages": [{"role": "user", "content": prompt, "images": [b64]}],
             "stream": False
         }
         r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=120)

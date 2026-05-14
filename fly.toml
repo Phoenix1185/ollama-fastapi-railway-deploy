@@ -7,6 +7,8 @@ primary_region = "iad"
 [env]
   DEFAULT_MODEL = "qwen2.5:0.5b"
   OLLAMA_HOST = "http://localhost:11434"
+  # USE_SQLITE = "true"  # Uncomment to force SQLite instead of PostgreSQL
+  # SQLITE_PATH = "/data/phoenix.db"
 
 [http_service]
   internal_port = 8000
@@ -17,11 +19,17 @@ primary_region = "iad"
   processes = ["app"]
 
   [[http_service.checks]]
-    interval = "15s"
-    timeout = "5s"
+    interval = "30s"
+    timeout = "10s"
     grace_period = "600s"
     method = "GET"
     path = "/health"
+
+# PERSISTENT STORAGE - Create this volume once with:
+# fly volumes create phoenix_data --region iad --size 3
+[[mounts]]
+  source = "phoenix_data"
+  destination = "/data"
 
 [[vm]]
   memory = "2gb"
