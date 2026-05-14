@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phoenix AI - Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
+.container{max-width:1200px;margin:0 auto;padding:20px}
+.header{display:flex;justify-content:space-between;align-items:center;padding:20px 0;border-bottom:1px solid #1a1a3e;margin-bottom:30px}
+.logo{font-size:1.8rem;font-weight:800;background:linear-gradient(90deg,#00d4ff,#7b2cbf);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav{display:flex;gap:15px}
+.nav a{color:#888;text-decoration:none;padding:8px 16px;border-radius:8px;font-size:.9rem;transition:.2s}
+.nav a:hover{color:#00d4ff;background:#1a1a3e}
+.nav a.active{color:#00d4ff;background:#1a1a3e;border:1px solid #2a2a5e}
+.card{background:#12122a;border:1px solid #1a1a3e;border-radius:16px;padding:24px;margin-bottom:20px}
+.card h2{color:#00d4ff;margin-bottom:16px;font-size:1.2rem;display:flex;align-items:center;gap:8px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
+.stat-card{background:#0f0f23;border:1px solid #1a1a3e;border-radius:12px;padding:20px;text-align:center}
+.stat-value{font-size:2rem;font-weight:700;color:#00d4ff}
+.stat-label{color:#888;font-size:.85rem;margin-top:4px}
+.btn{background:linear-gradient(90deg,#00d4ff,#7b2cbf);color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;font-size:.9rem}
+.btn:hover{opacity:.9}
+.btn-danger{background:linear-gradient(90deg,#ff4757,#ff6348)}
+input,select{background:#0f0f23;border:1px solid #2a2a5e;color:#e0e0e0;padding:10px 14px;border-radius:8px;font-size:.9rem;width:100%;margin-bottom:10px}
+input:focus,select:focus{outline:none;border-color:#00d4ff}
+.table{width:100%;border-collapse:collapse;margin-top:10px}
+.table th,.table td{padding:12px;text-align:left;border-bottom:1px solid #1a1a3e;font-size:.9rem}
+.table th{color:#00d4ff;font-weight:600;background:#0f0f23}
+.table td{color:#ccc}
+.table tr:hover td{background:#1a1a3e}
+.alert{padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:.9rem;display:none}
+.alert.success{background:#1a472a;border:1px solid #2a5a3a;color:#7ee787}
+.alert.error{background:#4a1a1a;border:1px solid #5a2a2a;color:#ff6b6b}
+.chat-box{height:350px;overflow-y:auto;background:#0a0a1a;border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid #1a1a3e}
+.message{margin-bottom:12px;padding:12px;border-radius:12px;max-width:80%;word-wrap:break-word}
+.message.user{background:#1a3a5c;margin-left:auto;color:white}
+.message.assistant{background:#2a2a4a;color:#e0e0e0}
+.input-row{display:flex;gap:10px}
+.tabs{display:flex;gap:10px;margin-bottom:20px;border-bottom:1px solid #1a1a3e;padding-bottom:10px}
+.tab{cursor:pointer;padding:8px 16px;border-radius:8px;color:#888;font-size:.9rem}
+.tab:hover{color:#00d4ff}
+.tab.active{color:#00d4ff;background:#1a1a3e}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.model-select{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.model-chip{cursor:pointer;padding:8px 16px;border-radius:20px;border:1px solid #2a2a5e;font-size:.85rem;color:#888;transition:.2s}
+.model-chip:hover{border-color:#00d4ff;color:#00d4ff}
+.model-chip.active{background:linear-gradient(90deg,#00d4ff,#7b2cbf);color:white;border:none}
+.chart-container{height:250px;background:#0a0a1a;border-radius:12px;padding:16px;border:1px solid #1a1a3e;margin-top:10px}
+.login-box{max-width:400px;margin:100px auto;background:#12122a;border:1px solid #1a1a3e;border-radius:16px;padding:40px}
+.login-box h2{text-align:center;margin-bottom:24px;color:#00d4ff}
+.switch-mode{text-align:center;color:#888;margin-top:16px;font-size:.9rem}
+.switch-mode a{color:#00d4ff;cursor:pointer}
+.hidden{display:none!important}
+@media(max-width:768px){.stats-grid{grid-template-columns:1fr 1fr}.nav{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<div class="logo">PHOENIX AI</div>
+<div class="nav">
+<a href="/ui" class="active">Dashboard</a>
+<a href="/api-docs">API Docs</a>
+<a href="/docs">Swagger</a>
+<a href="/redoc">ReDoc</a>
+</div>
+</div>
+
+<div id="authSection">
+<div class="login-box">
+<h2 id="authTitle">Login to Phoenix AI</h2>
+<div class="alert" id="authAlert"></div>
+<input type="email" id="authEmail" placeholder="Email address">
+<input type="password" id="authPassword" placeholder="Password">
+<input type="text" id="authName" placeholder="Your name (register only)" class="hidden">
+<button class="btn" style="width:100%" onclick="handleAuth()" id="authBtn">Login</button>
+<div class="switch-mode">
+<span id="switchText">No account? <a onclick="toggleMode()">Register</a></span>
+</div>
+</div>
+</div>
+
+<div id="appSection" class="hidden">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+<div>
+<h1 style="font-size:1.5rem">Welcome, <span id="userName">User</span></h1>
+<p style="color:#888;font-size:.85rem" id="userEmail"></p>
+</div>
+<button class="btn" onclick="logout()">Logout</button>
+</div>
+
+<div class="stats-grid">
+<div class="stat-card">
+<div class="stat-value" id="statRequests">0</div>
+<div class="stat-label">Total Requests</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="statTokens">0</div>
+<div class="stat-label">Tokens Used</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="statKeys">0</div>
+<div class="stat-label">API Keys</div>
+</div>
+<div class="stat-card">
+<div class="stat-value" id="statModels">0</div>
+<div class="stat-label">Models Available</div>
+</div>
+</div>
+
+<div class="tabs">
+<div class="tab active" onclick="showTab('chat')">Chat</div>
+<div class="tab" onclick="showTab('keys')">API Keys</div>
+<div class="tab" onclick="showTab('analytics')">Analytics</div>
+<div class="tab" onclick="showTab('webhooks')">Webhooks</div>
+<div class="tab" onclick="showTab('vision')">Vision</div>
+</div>
+
+<div id="tab-chat" class="tab-content active">
+<div class="card">
+<h2>Test Chat</h2>
+<div class="model-select" id="modelSelect"></div>
+<div class="chat-box" id="chatBox"></div>
+<div class="input-row">
+<input type="text" id="chatInput" placeholder="Type a message..." style="flex:1" onkeypress="if(event.key==='Enter')sendChat()">
+<button class="btn" onclick="sendChat()">Send</button>
+</div>
+</div>
+</div>
+
+<div id="tab-keys" class="tab-content">
+<div class="card">
+<h2>API Keys</h2>
+<div class="alert" id="keyAlert"></div>
+<div style="display:flex;gap:10px;margin-bottom:16px">
+<input type="text" id="keyName" placeholder="Key name (e.g., My App)" style="flex:1;margin:0">
+<button class="btn" onclick="createKey()">Create Key</button>
+</div>
+<div id="newKeyDisplay" class="alert success" style="margin-bottom:16px"></div>
+<table class="table">
+<thead><tr><th>Name</th><th>Usage</th><th>Tokens</th><th>Created</th><th>Action</th></tr></thead>
+<tbody id="keysTable"></tbody>
+</table>
+</div>
+</div>
+
+<div id="tab-analytics" class="tab-content">
+<div class="card">
+<h2>Usage Analytics</h2>
+<div class="chart-container" id="chartContainer">
+<canvas id="usageChart"></canvas>
+</div>
+<table class="table" style="margin-top:20px">
+<thead><tr><th>Time</th><th>Endpoint</th><th>Model</th><th>Tokens</th><th>Status</th></tr></thead>
+<tbody id="logsTable"></tbody>
+</table>
+</div>
+</div>
+
+<div id="tab-webhooks" class="tab-content">
+<div class="card">
+<h2>Webhooks</h2>
+<div class="alert" id="webhookAlert"></div>
+<div style="display:flex;gap:10px;margin-bottom:16px">
+<input type="url" id="webhookUrl" placeholder="https://your-app.com/webhook" style="flex:1;margin:0">
+<button class="btn" onclick="createWebhook()">Add Webhook</button>
+</div>
+<table class="table">
+<thead><tr><th>URL</th><th>Events</th><th>Status</th><th>Action</th></tr></thead>
+<tbody id="webhooksTable"></tbody>
+</table>
+</div>
+</div>
+
+<div id="tab-vision" class="tab-content">
+<div class="card">
+<h2>Vision (Image + Text)</h2>
+<div class="alert" id="visionAlert"></div>
+<input type="file" id="visionImage" accept="image/*" style="margin-bottom:10px">
+<input type="text" id="visionPrompt" placeholder="Describe what you see in this image...">
+<button class="btn" onclick="sendVision()">Analyze Image</button>
+<div id="visionResult" style="margin-top:16px;padding:16px;background:#0a0a1a;border-radius:8px;display:none"></div>
+</div>
+</div>
+
+</div>
+</div>
+
+<script>
+const baseUrl = window.location.origin;
+let token = localStorage.getItem('phoenix_token');
+let currentModel = 'qwen2.5:0.5b';
+let isLogin = true;
+
+function showAlert(id,msg,isError){
+const el=document.getElementById(id);
+el.textContent=msg;
+el.style.display='block';
+if(isError){el.classList.add('error');el.classList.remove('success');}else{el.classList.remove('error');el.classList.add('success');}
+setTimeout(()=>el.style.display='none',5000);
+}
+
+function toggleMode(){
+isLogin=!isLogin;
+document.getElementById('authTitle').textContent=isLogin?'Login to Phoenix AI':'Register for Phoenix AI';
+document.getElementById('authBtn').textContent=isLogin?'Login':'Register';
+document.getElementById('authName').classList.toggle('hidden',isLogin);
+document.getElementById('switchText').innerHTML=isLogin?'No account? <a onclick="toggleMode()">Register</a>':'Have an account? <a onclick="toggleMode()">Login</a>';
+}
+
+async function handleAuth(){
+const email=document.getElementById('authEmail').value;
+const password=document.getElementById('authPassword').value;
+const name=document.getElementById('authName').value;
+if(!email||!password){showAlert('authAlert','Fill all fields',true);return;}
+const endpoint=isLogin?'/auth/login':'/auth/register';
+const body=isLogin?{email,password}:{email,password,name};
+try{
+const res=await fetch(baseUrl+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+const data=await res.json();
+if(!res.ok){showAlert('authAlert',data.detail||'Error',true);return;}
+token=data.access_token;
+localStorage.setItem('phoenix_token',token);
+showAlert('authAlert','Success!',false);
+setTimeout(()=>initApp(),500);
+}catch(e){showAlert('authAlert',e.message,true);}
+}
+
+function logout(){
+localStorage.removeItem('phoenix_token');
+token=null;
+location.reload();
+}
+
+async function initApp(){
+if(!token){document.getElementById('authSection').classList.remove('hidden');document.getElementById('appSection').classList.add('hidden');return;}
+document.getElementById('authSection').classList.add('hidden');
+document.getElementById('appSection').classList.remove('hidden');
+try{
+const res=await fetch(baseUrl+'/auth/me',{headers:{'Authorization':'Bearer '+token}});
+const data=await res.json();
+if(!res.ok){logout();return;}
+document.getElementById('userName').textContent=data.name||data.email.split('@')[0];
+document.getElementById('userEmail').textContent=data.email;
+document.getElementById('statRequests').textContent=data.total_requests;
+document.getElementById('statTokens').textContent=data.total_tokens;
+document.getElementById('statKeys').textContent=data.api_keys_count;
+loadModels();
+loadKeys();
+loadAnalytics();
+loadWebhooks();
+}catch(e){console.error(e);}
+}
+
+async function loadModels(){
+try{
+const res=await fetch(baseUrl+'/v1/models',{headers:{'Authorization':'Bearer '+token}});
+const data=await res.json();
+const models=data.data||[];
+document.getElementById('statModels').textContent=models.length;
+const container=document.getElementById('modelSelect');
+container.innerHTML='';
+models.forEach(m=>{
+const chip=document.createElement('div');
+chip.className='model-chip'+(m.id===currentModel?' active':'');
+chip.textContent=m.id;
+chip.onclick=()=>{currentModel=m.id;document.querySelectorAll('.model-chip').forEach(c=>c.classList.remove('active'));chip.classList.add('active');};
+container.appendChild(chip);
+});
+}catch(e){console.error(e);}
+}
+
+async function sendChat(){
+const input=document.getElementById('chatInput');
+const box=document.getElementById('chatBox');
+const msg=input.value.trim();
+if(!msg)return;
+box.innerHTML+=`<div class="message user">${msg}</div>`;
+input.value='';
+box.scrollTop=box.scrollHeight;
+try{
+const res=await fetch(baseUrl+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({model:currentModel,messages:[{role:'user',content:msg}]})});
+if(res.status===401){showAlert('keyAlert','Session expired',true);logout();return;}
+const data=await res.json();
+const reply=data.choices?.[0]?.message?.content||'No response';
+box.innerHTML+=`<div class="message assistant">${reply}</div>`;
+box.scrollTop=box.scrollHeight;
+}catch(e){box.innerHTML+=`<div class="message assistant" style="color:#ff6b6b">Error: ${e.message}</div>`;}
+}
+
+async function createKey(){
+const name=document.getElementById('keyName').value;
+if(!name){showAlert('keyAlert','Enter key name',true);return;}
+try{
+const res=await fetch(baseUrl+'/api-keys',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({name})});
+const data=await res.json();
+if(!res.ok){showAlert('keyAlert',data.detail,true);return;}
+document.getElementById('newKeyDisplay').textContent='New Key: '+data.api_key;
+document.getElementById('newKeyDisplay').style.display='block';
+showAlert('keyAlert','Key created!',false);
+loadKeys();
+}catch(e){showAlert('keyAlert',e.message,true);}
+}
+
+async function loadKeys(){
+try{
+const res=await fetch(baseUrl+'/api-keys',{headers:{'Authorization':'Bearer '+token}});
+const data=await res.json();
+const tbody=document.getElementById('keysTable');
+tbody.innerHTML='';
+(data.keys||[]).forEach(k=>{
+const tr=document.createElement('tr');
+tr.innerHTML=`<td>${k.name}</td><td>${k.usage_count}</td><td>${k.token_count}</td><td>${new Date(k.created_at).toLocaleDateString()}</td><td><button class="btn btn-danger" onclick="revokeKey(${k.id})">Revoke</button></td>`;
+tbody.appendChild(tr);
+});
+}catch(e){console.error(e);}
+}
+
+async function revokeKey(id){
+if(!confirm('Revoke this key?'))return;
+try{
+await fetch(baseUrl+'/api-keys/revoke',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({key_id:id})});
+showAlert('keyAlert','Key revoked',false);
+loadKeys();
+}catch(e){showAlert('keyAlert',e.message,true);}
+}
+
+async function loadAnalytics(){
+try{
+const res=await fetch(baseUrl+'/analytics/usage',{headers:{'Authorization':'Bearer '+token}});
+const data=await res.json();
+const tbody=document.getElementById('logsTable');
+tbody.innerHTML='';
+(data.recent_logs||[]).forEach(l=>{
+const tr=document.createElement('tr');
+tr.innerHTML=`<td>${new Date(l.created_at).toLocaleString()}</td><td>${l.endpoint}</td><td>${l.model}</td><td>${l.tokens}</td><td>${l.status}</td>`;
+tbody.appendChild(tr);
+});
+// Simple bar chart using divs
+const container=document.getElementById('chartContainer');
+if(data.model_breakdown&&Object.keys(data.model_breakdown).length>0){
+let html='<div style="display:flex;align-items:flex-end;height:200px;gap:10px;padding:10px;">';
+const maxTokens=Math.max(...Object.values(data.model_breakdown).map(m=>m.tokens),1);
+for(const[model,stats]of Object.entries(data.model_breakdown)){
+const height=(stats.tokens/maxTokens)*180;
+html+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;"><div style="width:100%;background:linear-gradient(180deg,#00d4ff,#7b2cbf);border-radius:4px;min-height:10px;height:${height}px;transition:.3s;"></div><span style="font-size:.7rem;color:#888;text-align:center;word-break:break-all;">${model}</span></div>`;
+}
+html+='</div>';
+container.innerHTML=html;
+} else {container.innerHTML='<p style="color:#888;text-align:center;padding-top:80px">No data yet. Start chatting!</p>';}
+}catch(e){console.error(e);}
+}
+
+async function createWebhook(){
+const url=document.getElementById('webhookUrl').value;
+if(!url){showAlert('webhookAlert','Enter webhook URL',true);return;}
+try{
+const res=await fetch(baseUrl+'/webhooks',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({url})});
+const data=await res.json();
+if(!res.ok){showAlert('webhookAlert',data.detail,true);return;}
+showAlert('webhookAlert','Webhook added! Secret: '+data.secret,false);
+loadWebhooks();
+}catch(e){showAlert('webhookAlert',e.message,true);}
+}
+
+async function loadWebhooks(){
+try{
+const res=await fetch(baseUrl+'/webhooks',{headers:{'Authorization':'Bearer '+token}});
+const data=await res.json();
+const tbody=document.getElementById('webhooksTable');
+tbody.innerHTML='';
+(data.webhooks||[]).forEach(w=>{
+const tr=document.createElement('tr');
+tr.innerHTML=`<td>${w.url}</td><td>${w.events}</td><td>${w.active?'Active':'Inactive'}</td><td><button class="btn btn-danger" onclick="deleteWebhook(${w.id})">Remove</button></td>`;
+tbody.appendChild(tr);
+});
+}catch(e){console.error(e);}
+}
+
+async function sendVision(){
+const file=document.getElementById('visionImage').files[0];
+const prompt=document.getElementById('visionPrompt').value;
+if(!file||!prompt){showAlert('visionAlert','Select image and enter prompt',true);return;}
+const formData=new FormData();
+formData.append('image',file);
+formData.append('prompt',prompt);
+try{
+const res=await fetch(baseUrl+'/v1/chat/vision/upload',{method:'POST',headers:{'Authorization':'Bearer '+token},body:formData});
+const data=await res.json();
+const result=document.getElementById('visionResult');
+result.textContent=data.choices?.[0]?.message?.content||'No response';
+result.style.display='block';
+showAlert('visionAlert','Analysis complete!',false);
+}catch(e){showAlert('visionAlert',e.message,true);}
+}
+
+function showTab(tab){
+document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+event.target.classList.add('active');
+document.getElementById('tab-'+tab).classList.add('active');
+if(tab==='analytics')loadAnalytics();
+if(tab==='keys')loadKeys();
+if(tab==='webhooks')loadWebhooks();
+}
+
+initApp();
+</script>
+</body>
+</html>
