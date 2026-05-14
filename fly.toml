@@ -21,15 +21,15 @@ primary_region = "iad"
   [[http_service.checks]]
     interval = "30s"
     timeout = "10s"
-    grace_period = "600s"
+    grace_period = "60s"
     method = "GET"
     path = "/health"
 
 # PERSISTENT STORAGE - Create this volume once with:
 # fly volumes create phoenix_data --region iad --size 3
-[[mounts]]
-  source = "phoenix_data"
-  destination = "/data"
+# [[mounts]]
+#   source = "phoenix_data"
+#   destination = "/data"
 
 [[vm]]
   memory = "2gb"
