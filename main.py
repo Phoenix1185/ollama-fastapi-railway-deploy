@@ -21,6 +21,13 @@ from jose import jwt, JWTError
 
 # ============ CONFIG ============
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_1imPJgOw5qBc@ep-divine-fog-ajro56fz-pooler.c-3.us-east-2.aws.neon.tech/Dailymotion%20?sslmode=require&channel_binding=require")
+# Clean the DATABASE_URL just in case there are trailing spaces or problematic characters
+DATABASE_URL = DATABASE_URL.strip()
+# Ensure the database name and other components are properly URL-encoded
+if " " in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace(" ", "%20")
+# Some Neon URLs might have multiple spaces or other characters
+DATABASE_URL = DATABASE_URL.replace(" ", "%20")
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key-now")
 MASTER_KEY = os.getenv("MASTER_KEY", "change-this-master-key-now")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")

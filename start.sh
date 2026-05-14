@@ -25,4 +25,5 @@ ollama serve &
 
 # Start FastAPI immediately so health checks pass
 echo "Starting FastAPI on port 8000..."
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
+# Use python -m uvicorn to ensure it uses the correct environment
+exec python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
