@@ -30,8 +30,9 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 
 # ============ DATABASE SETUP ============
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+db_available = False
+engine = None
+SessionLocal = None
 Base = declarative_base()
 
 class User(Base):
@@ -79,14 +80,24 @@ class WebhookConfig(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+# Initialize database
+try:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    db_available = True
+    print("Database connected successfully.")
+except Exception as e:
+    print(f"WARNING: Database connection failed at startup: {e}")
+    print("App will start without database. DB-dependent endpoints will return errors.")
 
 # ============ AUTH SETUP ============
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
 def get_db():
+    if not db_available or SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     db = SessionLocal()
     try:
         yield db
@@ -169,6 +180,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    global engine, SessionLocal, db_available
+    if not db_available:
+        import asyncio
+        import threading
+        def retry_db():
+            global engine, SessionLocal, db_available
+            for attempt in range(5):
+                try:
+                    time.sleep(5 * (attempt + 1))
+                    engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+                    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                    Base.metadata.create_all(bind=engine)
+                    db_available = True
+                    print(f"Database connected on retry attempt {attempt + 1}")
+                    break
+                except Exception as e:
+                    print(f"DB retry {attempt + 1} failed: {e}")
+        threading.Thread(target=retry_db, daemon=True).start()
 
 # ============ REQUEST MODELS ============
 
@@ -276,11 +308,15 @@ def root():
 
 @app.get("/health")
 def health():
+    status = {"auth": "enabled"}
     try:
         r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
-        return {"status": "ok", "ollama": "connected", "auth": "enabled", "db": "connected"}
+        status["ollama"] = "connected"
     except:
-        return {"status": "degraded", "ollama": "not ready", "auth": "enabled"}
+        status["ollama"] = "not ready"
+    status["db"] = "connected" if db_available else "unavailable"
+    status["status"] = "ok" if status["ollama"] == "connected" else "degraded"
+    return status
 
 # ============ AUTH ENDPOINTS ============
 
@@ -297,8 +333,7 @@ def register(req: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_access_token({"sub": user.id})
-    return {"access_token": token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "name": user.name}}
+    return {"status": "success", "user_id": user.id}
 
 @app.post("/auth/login")
 def login(req: UserLogin, db: Session = Depends(get_db)):
@@ -306,143 +341,75 @@ def login(req: UserLogin, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token({"sub": user.id})
-    return {"access_token": token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "name": user.name}}
+    return {"access_token": token, "token_type": "bearer"}
 
 @app.get("/auth/me")
-def me(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
-    keys = db.query(ApiKey).filter(ApiKey.user_id == user.id, ApiKey.revoked == False).all()
-    total_usage = db.query(UsageLog).filter(UsageLog.user_id == user.id).count()
-    total_tokens = db.query(UsageLog).filter(UsageLog.user_id == user.id).with_entities(UsageLog.tokens_used).all()
-    total_tokens_sum = sum([t[0] or 0 for t in total_tokens])
-    return {
-        "id": user.id,
-        "email": user.email,
-        "name": user.name,
-        "api_keys_count": len(keys),
-        "total_requests": total_usage,
-        "total_tokens": total_tokens_sum,
-        "created_at": user.created_at.isoformat() if user.created_at else None
-    }
+def get_me(user = Depends(require_user_auth)):
+    return user
 
-# ============ API KEY MANAGEMENT (USER AUTH) ============
+# ============ API KEY ENDPOINTS ============
 
 @app.post("/api-keys")
-def create_api_key(req: CreateKeyRequest, user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
-    raw_key = "phoenix_" + secrets.token_urlsafe(32)
+def create_key(req: CreateKeyRequest, user = Depends(require_user_auth), db: Session = Depends(get_db)):
+    raw_key = f"phoenix_{secrets.token_urlsafe(32)}"
     key_hash = hash_key(raw_key)
-    api_key = ApiKey(
+    new_key = ApiKey(
         user_id=user.id,
         key_hash=key_hash,
         name=req.name,
         rate_limit=req.rate_limit
     )
-    db.add(api_key)
+    db.add(new_key)
     db.commit()
-    db.refresh(api_key)
-    return {
-        "api_key": raw_key,
-        "name": req.name,
-        "id": api_key.id,
-        "warning": "Save this key now - it will never be shown again!"
-    }
+    return {"api_key": raw_key, "name": req.name}
 
 @app.get("/api-keys")
-def list_api_keys(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
-    keys = db.query(ApiKey).filter(ApiKey.user_id == user.id).all()
-    return {
-        "keys": [{
-            "id": k.id,
-            "name": k.name,
-            "rate_limit": k.rate_limit,
-            "usage_count": k.usage_count,
-            "token_count": k.token_count,
-            "created_at": k.created_at.isoformat() if k.created_at else None,
-            "revoked": k.revoked
-        } for k in keys]
-    }
+def list_keys(user = Depends(require_user_auth), db: Session = Depends(get_db)):
+    keys = db.query(ApiKey).filter(ApiKey.user_id == user.id, ApiKey.revoked == False).all()
+    return {"api_keys": [{"id": k.id, "name": k.name, "usage": k.usage_count, "tokens": k.token_count, "created_at": k.created_at} for k in keys]}
 
 @app.post("/api-keys/revoke")
-def revoke_api_key(req: RevokeKeyRequest, user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
+def revoke_key(req: RevokeKeyRequest, user = Depends(require_user_auth), db: Session = Depends(get_db)):
     key = db.query(ApiKey).filter(ApiKey.id == req.key_id, ApiKey.user_id == user.id).first()
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
     key.revoked = True
     db.commit()
-    return {"status": "revoked", "key_id": req.key_id}
+    return {"status": "revoked"}
 
-# ============ WEBHOOK MANAGEMENT ============
+# ============ WEBHOOK ENDPOINTS ============
 
 @app.post("/webhooks")
-def create_webhook(req: WebhookSetup, user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
+def setup_webhook(req: WebhookSetup, user = Depends(require_user_auth), db: Session = Depends(get_db)):
     wh = WebhookConfig(
         user_id=user.id,
         url=req.url,
         events=req.events,
-        secret=secrets.token_urlsafe(16)
+        secret=secrets.token_hex(16)
     )
     db.add(wh)
     db.commit()
-    db.refresh(wh)
-    return {"id": wh.id, "url": req.url, "events": req.events, "secret": wh.secret, "status": "active"}
-
-@app.get("/webhooks")
-def list_webhooks(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
-    hooks = db.query(WebhookConfig).filter(WebhookConfig.user_id == user.id).all()
-    return {"webhooks": [{"id": h.id, "url": h.url, "events": h.events, "active": h.active} for h in hooks]}
+    return {"id": wh.id, "secret": wh.secret}
 
 # ============ ANALYTICS ENDPOINTS ============
 
 @app.get("/analytics/usage")
-def get_usage(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
-    # Total stats
-    total_requests = db.query(UsageLog).filter(UsageLog.user_id == user.id).count()
-    total_tokens = db.query(UsageLog).filter(UsageLog.user_id == user.id).with_entities(UsageLog.tokens_used).all()
-    total_tokens_sum = sum([t[0] or 0 for t in total_tokens])
-
-    # Per model breakdown
-    model_stats = db.query(UsageLog.model, UsageLog.tokens_used).filter(UsageLog.user_id == user.id).all()
-    model_breakdown = {}
-    for m, t in model_stats:
-        if m not in model_breakdown:
-            model_breakdown[m] = {"requests": 0, "tokens": 0}
-        model_breakdown[m]["requests"] += 1
-        model_breakdown[m]["tokens"] += t or 0
-
-    # Recent logs (last 50)
-    recent = db.query(UsageLog).filter(UsageLog.user_id == user.id).order_by(UsageLog.created_at.desc()).limit(50).all()
-
+def get_usage(user = Depends(require_user_auth), db: Session = Depends(get_db)):
+    logs = db.query(UsageLog).filter(UsageLog.user_id == user.id).order_by(UsageLog.created_at.desc()).limit(100).all()
+    total_tokens = db.query(UsageLog).with_entities(UsageLog.tokens_used).filter(UsageLog.user_id == user.id).all()
+    sum_tokens = sum([t[0] or 0 for t in total_tokens])
     return {
-        "total_requests": total_requests,
-        "total_tokens": total_tokens_sum,
-        "model_breakdown": model_breakdown,
-        "recent_logs": [{
-            "id": r.id,
-            "endpoint": r.endpoint,
-            "model": r.model,
-            "tokens": r.tokens_used,
-            "status": r.status,
-            "duration_ms": r.duration_ms,
-            "created_at": r.created_at.isoformat() if r.created_at else None
-        } for r in recent]
+        "total_tokens": sum_tokens,
+        "request_count": len(total_tokens),
+        "recent_logs": logs
     }
 
-@app.get("/analytics/daily")
-def daily_stats(user: User = Depends(require_user_auth), db: Session = Depends(get_db)):
-    from sqlalchemy import func
-    results = db.query(
-        func.date(UsageLog.created_at).label("date"),
-        func.count(UsageLog.id).label("requests"),
-        func.sum(UsageLog.tokens_used).label("tokens")
-    ).filter(UsageLog.user_id == user.id).group_by(func.date(UsageLog.created_at)).order_by("date").all()
-
-    return {"daily": [{"date": str(r.date), "requests": r.requests, "tokens": r.tokens or 0} for r in results]}
-
-# ============ LLM ENDPOINTS (PROTECTED) ============
+# ============ OLLAMA PROXY ENDPOINTS ============
 
 @app.get("/v1/models")
-def list_models(auth = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_models(auth = Depends(get_current_user)):
     try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=30)
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
         data = r.json()
         models = []
         for m in data.get("models", []):
@@ -458,9 +425,9 @@ def list_models(auth = Depends(get_current_user), db: Session = Depends(get_db))
 
 @app.post("/v1/chat/completions")
 def chat_completions(
-    req: ChatRequest,
+    req: ChatRequest, 
     background_tasks: BackgroundTasks,
-    auth = Depends(get_current_user),
+    auth = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
     model = req.model or DEFAULT_MODEL
@@ -476,23 +443,13 @@ def chat_completions(
             }
         }
         r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, stream=req.stream, timeout=120)
-
+        
         if req.stream:
             def streamer():
-                full_content = ""
                 for line in r.iter_lines():
                     if line:
-                        decoded = line.decode("utf-8")
-                        full_content += decoded
-                        yield decoded + "\n"
-                # Log after stream completes
-                duration = (time.time() - start_time) * 1000
-                tokens = len(full_content.split())
-                log_usage(db, auth["id"], auth.get("id") if auth["type"] == "api_key" else None, 
-                         "/v1/chat/completions", model, tokens, status="success", duration_ms=duration)
-                trigger_webhooks(auth["id"], "chat.completed", {"model": model, "tokens": tokens}, db)
-
-            return StreamingResponse(streamer(), media_type="text/event-stream")
+                        yield line.decode("utf-8") + "\n"
+            return StreamingResponse(streamer(), media_type="application/x-ndjson")
 
         data = r.json()
         content = data.get("message", {}).get("content", "")
