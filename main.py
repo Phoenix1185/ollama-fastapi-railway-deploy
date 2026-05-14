@@ -333,15 +333,8 @@ def root():
 
 @app.get("/health")
 def health():
-    status = {"auth": "enabled"}
-    try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
-        status["ollama"] = "connected"
-    except:
-        status["ollama"] = "not ready"
-    status["db"] = "connected" if db_available else "unavailable"
-    status["status"] = "ok" if status["ollama"] == "connected" else "degraded"
-    return status
+    # Return as fast as possible to satisfy Fly.io health checks
+    return {"status": "ok", "db": "connected" if db_available else "unavailable"}
 
 # ============ AUTH ENDPOINTS ============
 
