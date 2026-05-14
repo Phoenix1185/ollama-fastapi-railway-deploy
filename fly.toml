@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for ollama-fastapi-railway on 2026-05-14T03:35:08Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = "ollama-fastapi-railway"
 primary_region = "iad"
 
@@ -24,6 +29,6 @@ primary_region = "iad"
     path = "/health"
 
 [[vm]]
-  memory = "2gb"
-  cpu_kind = "shared"
+  memory = '2gb'
+  cpu_kind = 'shared'
   cpus = 2
