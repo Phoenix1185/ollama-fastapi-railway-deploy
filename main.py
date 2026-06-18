@@ -187,7 +187,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if not credentials:
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = credentials.credentials
-    # Try API key first
+    
+    # Try Master Key first
+    if token == MASTER_KEY:
+        return {"type": "admin", "id": 0, "user_id": 0, "name": "Admin"}
+        
+    # Try API key
     key_hash = hash_key(token)
     api_key = db.query(ApiKey).filter(ApiKey.key_hash == key_hash, ApiKey.revoked == False).first()
     if api_key:
@@ -507,7 +512,7 @@ def list_models(auth = Depends(get_current_user), db: Session = Depends(get_db))
         
     # Add Ollama models
     try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=30)
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
         if r.status_code == 200:
             ollama_data = r.json()
             for m in ollama_data.get("models", []):
@@ -521,7 +526,8 @@ def list_models(auth = Depends(get_current_user), db: Session = Depends(get_db))
         print(f"Ollama tags error: {e}")
         # We don't raise error if at least Azure is available
         if not models:
-            raise HTTPException(status_code=503, detail=f"Ollama error: {str(e)}")
+            # Return empty list instead of 500/503 if we want to be more resilient
+            return {"object": "list", "data": []}
             
     return {"object": "list", "data": models}
 
