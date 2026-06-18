@@ -34,6 +34,40 @@ MASTER_KEY = os.getenv("MASTER_KEY", "change-this-master-key-now")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen2.5:0.5b")
 
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY", "").strip()
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "").strip()
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview").strip()
+
+# Handle different Azure URL formats
+if AZURE_OPENAI_ENDPOINT:
+    # If user provides the OpenAI-specific URL, use it as the endpoint
+    if "/openai/v1" in AZURE_OPENAI_ENDPOINT:
+        AZURE_OPENAI_ENDPOINT = AZURE_OPENAI_ENDPOINT.split("/openai/v1")[0]
+    # If user provides a project URL, we need the base resource URL
+    elif "services.ai.azure.com" in AZURE_OPENAI_ENDPOINT:
+        # We try to keep it as is, but standard Azure SDK needs the resource URL
+        pass
+
+# Use Azure if credentials are provided
+USE_AZURE = bool(AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY)
+
+if USE_AZURE:
+    from openai import AzureOpenAI
+    try:
+        azure_client = AzureOpenAI(
+            api_key=AZURE_OPENAI_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT
+        )
+    except Exception as e:
+        print(f"Failed to initialize Azure client: {e}")
+        azure_client = None
+        USE_AZURE = False
+else:
+    azure_client = None
+
 # Phoenix AI Identity - Injected into every conversation
 PHOENIX_SYSTEM_PROMPT = os.getenv("PHOENIX_SYSTEM_PROMPT", """You are Phoenix AI, a powerful large language model developed by Phoenix Teams & IYANU. 
 You are helpful, creative, clever, and very friendly. 
